@@ -104,7 +104,7 @@ bot.action("back:countries", async ctx => {
 // ====== Fetch Trends via SearchAPI ======
 async function fetchTrends(code, countryName) {
   try {
-    const url = `https://www.searchapi.io/api/v1/search?engine=google_trends&data_type=trending_now&geo=${code}&hl=ar&api_key=${SEARCHAPI_KEY}`;
+    const url = `https://www.searchapi.io/api/v1/search?engine=google_trends_trending_now&geo=${code}&hl=ar&api_key=${SEARCHAPI_KEY}`;
 
     const res = await axios.get(url);
     const items = res.data.trending_searches || [];
