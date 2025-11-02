@@ -7,11 +7,11 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SEARCHAPI_KEY = process.env.SEARCHAPI_KEY;
 
 if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN مفقود");
+  console.error("❌ BOT_TOKEN missing");
   process.exit(1);
 }
 if (!SEARCHAPI_KEY) {
-  console.error("❌ SEARCHAPI_KEY مفقود");
+  console.error("❌ SEARCHAPI_KEY missing");
   process.exit(1);
 }
 
@@ -21,17 +21,16 @@ const BASE_URL =
   process.env.BASE_URL ||
   null;
 
-// ====== BOT ======
-const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 90_000 });
+const bot = new Telegraf(BOT_TOKEN);
 
-// الدول (زرار + أكواد SearchAPI)
+// ====== Countries ======
 const COUNTRIES = {
-  sa: { code: "sa", name: "السعودية 🇸🇦" },
-  eg: { code: "eg", name: "مصر 🇪🇬" },
-  ae: { code: "ae", name: "الإمارات 🇦🇪" },
-  us: { code: "us", name: "أمريكا 🇺🇸" },
-  gb: { code: "gb", name: "بريطانيا 🇬🇧" },
-  in: { code: "in", name: "الهند 🇮🇳" }
+  sa: { code: "sa", name: "🇸🇦 السعودية" },
+  eg: { code: "eg", name: "🇪🇬 مصر" },
+  ae: { code: "ae", name: "🇦🇪 الإمارات" },
+  us: { code: "us", name: "🇺🇸 أمريكا" },
+  gb: { code: "gb", name: "🇬🇧 بريطانيا" },
+  in: { code: "in", name: "🇮🇳 الهند" }
 };
 
 function countryKeyboard() {
@@ -51,103 +50,95 @@ function countryKeyboard() {
 
 function sourceKeyboard(cc) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🔥 Google Trends (Realtime)", `src:google:${cc}`)],
+    [Markup.button.callback("🔥 Google Trends", `src:google:${cc}`)],
     [
       Markup.button.callback("▶️ YouTube (قريبًا)", `src:yt:${cc}`),
       Markup.button.callback("𝕏 Twitter (قريبًا)", `src:tw:${cc}`)
     ],
-    [Markup.button.callback("⬅️ رجوع للدول", "back:countries")]
+    [Markup.button.callback("⬅️ رجوع", "back:countries")]
   ]);
 }
 
-bot.start(ctx =>
-  ctx.reply("✅ البوت جاهز. اكتب /trend لاختيار الدولة والمصدر.")
-);
+// ====== START ======
+bot.start(ctx => ctx.reply("✅ جاهز. اكتب /trend لاختيار الدولة."));
 
-bot.command("trend", async ctx => {
-  await ctx.reply("اختر الدولة:", countryKeyboard());
-});
+bot.command("trend", ctx => ctx.reply("اختر الدولة:", countryKeyboard()));
 
-// اختيار الدولة
+// ====== Country selected ======
 bot.action(/^country:(.+)$/, async ctx => {
   await ctx.answerCbQuery();
   const cc = ctx.match[1];
   const meta = COUNTRIES[cc];
-  if (!meta) return ctx.reply("الدولة غير مدعومة الآن.");
+  if (!meta) return ctx.reply("الدولة غير مدعومة.");
+
   await ctx.editMessageText(
     `الدولة المختارة: ${meta.name}\nاختر المصدر:`,
     sourceKeyboard(cc)
   );
 });
 
-// اختيار المصدر
+// ====== Source selected ======
 bot.action(/^src:(.+):(.+)$/, async ctx => {
-  try {
-    await ctx.answerCbQuery();
-    const src = ctx.match[1];
-    const cc = ctx.match[2];
-    const meta = COUNTRIES[cc];
-    if (!meta) return ctx.reply("الدولة غير مدعومة.");
+  await ctx.answerCbQuery();
+  const src = ctx.match[1];
+  const cc = ctx.match[2];
+  const meta = COUNTRIES[cc];
 
-    if (src === "google") {
-      await ctx.editMessageText(`جارِ جلب ترند ${meta.name}...`);
-      const text = await fetchTrends(meta.code, meta.name);
-      return ctx.reply(text, { disable_web_page_preview: true });
-    }
+  if (!meta) return ctx.reply("الدولة غير مدعومة.");
 
-    return ctx.reply("هذا المصدر قريبًا. شغال الآن: Google Trends فقط.");
-  } catch (e) {
-    console.error(e);
-    return ctx.reply("حصل خطأ غير متوقع.");
+  if (src === "google") {
+    await ctx.editMessageText(`جاري جلب الترند في ${meta.name}...`);
+    const text = await fetchTrends(meta.code, meta.name);
+    return ctx.reply(text, { disable_web_page_preview: true });
   }
+
+  return ctx.reply("💡 هذا المصدر قريبًا.\nالمتاح الآن: Google Trends فقط.");
 });
 
-// رجوع للدول
+// ====== Back ======
 bot.action("back:countries", async ctx => {
   await ctx.answerCbQuery();
-  await ctx.editMessageText("اختر الدولة:", countryKeyboard());
+  ctx.editMessageText("اختر الدولة:", countryKeyboard());
 });
 
-// ====== SearchAPI Trends ======
+// ====== Fetch Trends via SearchAPI ======
 async function fetchTrends(code, countryName) {
   try {
-    const url = `https://www.searchapi.io/api/v1/search?engine=google_trends&geo=${code}&api_key=${SEARCHAPI_KEY}`;
+    const url = `https://www.searchapi.io/api/v1/search?engine=google_trends&data_type=trending_now&geo=${code}&hl=ar&api_key=${SEARCHAPI_KEY}`;
 
     const res = await axios.get(url);
-    const items = res.data?.trending_searches || [];
+    const items = res.data.trending_searches || [];
 
-    if (!items.length) return `لا يوجد ترند متاح لـ ${countryName}.`;
+    if (!items.length)
+      return `لا يوجد ترند متاح لـ ${countryName} الآن.`;
 
     const top = items.slice(0, 10).map((item, i) => {
       const title = item.title || "غير معروف";
-      const url = item?.articles?.[0]?.url || "";
-      return `${i + 1}. ${title}${url ? `\n   ${url}` : ""}`;
+      const link = item?.articles?.[0]?.url || "";
+      return `${i + 1}. ${title}${link ? `\n${link}` : ""}`;
     });
 
     return `🔥 ترند ${countryName} الآن:\n\n${top.join("\n\n")}`;
-  } catch (err) {
-    console.error(err);
-    return "⚠️ تعذر جلب الترند حالياً. جرب بعد قليل.";
+  } catch (e) {
+    console.error(e);
+    return "⚠️ حدث خطأ أثناء جلب الترند. حاول لاحقًا.";
   }
 }
 
-// ====== SERVER / WEBHOOK ======
+// ====== Server / Webhook ======
 const app = express();
-app.get("/", (_, res) => res.send("Trend bot is alive."));
+app.get("/", (_, res) => res.send("✅ Trend bot is running"));
 
 if (BASE_URL) {
-  const secretPath = `/telegraf/${bot.secretPathComponent()}`;
-  app.use(bot.webhookCallback(secretPath));
-  bot.telegram
-    .setWebhook(`${BASE_URL}${secretPath}`)
-    .then(() => console.log("✅ Webhook متصل:", `${BASE_URL}${secretPath}`))
-    .catch(err => console.error("❌ Webhook Error", err));
+  const secret = `/telegraf/${bot.secretPathComponent()}`;
+  app.use(bot.webhookCallback(secret));
+  bot.telegram.setWebhook(`${BASE_URL}${secret}`);
 } else {
-  bot.launch().then(() => console.log("✅ Bot launched with polling"));
+  bot.launch();
 }
 
 app.listen(PORT, () =>
-  console.log(`HTTP server on :${PORT} ${BASE_URL ? "(webhook)" : "(polling)"}`)
+  console.log(`✅ Server running on port ${PORT}`)
 );
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
