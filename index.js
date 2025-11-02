@@ -23,7 +23,7 @@ const BASE_URL =
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// ====== Countries ======
+// ====== COUNTRIES ======
 const COUNTRIES = {
   sa: { code: "sa", name: "🇸🇦 السعودية" },
   eg: { code: "eg", name: "🇪🇬 مصر" },
@@ -33,6 +33,7 @@ const COUNTRIES = {
   in: { code: "in", name: "🇮🇳 الهند" }
 };
 
+// ====== KEYBOARDS ======
 function countryKeyboard() {
   return Markup.inlineKeyboard([
     [
@@ -59,16 +60,15 @@ function sourceKeyboard(cc) {
   ]);
 }
 
-// ====== START ======
+// ====== BOT COMMANDS ======
 bot.start(ctx => ctx.reply("✅ جاهز. اكتب /trend لاختيار الدولة."));
-
 bot.command("trend", ctx => ctx.reply("اختر الدولة:", countryKeyboard()));
 
-// ====== Country selected ======
 bot.action(/^country:(.+)$/, async ctx => {
   await ctx.answerCbQuery();
   const cc = ctx.match[1];
   const meta = COUNTRIES[cc];
+
   if (!meta) return ctx.reply("الدولة غير مدعومة.");
 
   await ctx.editMessageText(
@@ -77,7 +77,6 @@ bot.action(/^country:(.+)$/, async ctx => {
   );
 });
 
-// ====== Source selected ======
 bot.action(/^src:(.+):(.+)$/, async ctx => {
   await ctx.answerCbQuery();
   const src = ctx.match[1];
@@ -92,20 +91,19 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
     return ctx.reply(text, { disable_web_page_preview: true });
   }
 
-  return ctx.reply("💡 هذا المصدر قريبًا.\nالمتاح الآن: Google Trends فقط.");
+  return ctx.reply("💡 قريبًا YouTube / Twitter\nالمتاح الآن: Google Trends فقط ✅");
 });
 
-// ====== Back ======
 bot.action("back:countries", async ctx => {
   await ctx.answerCbQuery();
   ctx.editMessageText("اختر الدولة:", countryKeyboard());
 });
 
-// ====== Fetch Trends via SearchAPI ======
+// ====== FETCH TRENDS ======
 async function fetchTrends(code, countryName) {
   try {
     const url = `https://www.searchapi.io/api/v1/search?engine=google_trends_trending_now&geo=${code}&hl=ar&api_key=${SEARCHAPI_KEY}`;
-
+    
     const res = await axios.get(url);
     const items = res.data.trending_searches || [];
 
@@ -120,14 +118,14 @@ async function fetchTrends(code, countryName) {
 
     return `🔥 ترند ${countryName} الآن:\n\n${top.join("\n\n")}`;
   } catch (e) {
-    console.error(e);
-    return "⚠️ حدث خطأ أثناء جلب الترند. حاول لاحقًا.";
+    console.error("TREND ERROR:", e);
+    return "⚠️ حصل خطأ أثناء جلب الترند.\nحاول مرة ثانية.";
   }
 }
 
-// ====== Server / Webhook ======
+// ====== SERVER / WEBHOOK ======
 const app = express();
-app.get("/", (_, res) => res.send("✅ Trend bot is running"));
+app.get("/", (_, res) => res.send("✅ Bot is running"));
 
 if (BASE_URL) {
   const secret = `/telegraf/${bot.secretPathComponent()}`;
