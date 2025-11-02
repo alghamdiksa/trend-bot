@@ -1,13 +1,20 @@
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
-import googleTrends from "google-trends-api";
+import axios from "axios";
 
 // ====== ENV ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const SEARCHAPI_KEY = process.env.SEARCHAPI_KEY;
+
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN مفقود");
   process.exit(1);
 }
+if (!SEARCHAPI_KEY) {
+  console.error("❌ SEARCHAPI_KEY مفقود");
+  process.exit(1);
+}
+
 const PORT = process.env.PORT || 3000;
 const BASE_URL =
   process.env.RENDER_EXTERNAL_URL ||
@@ -17,14 +24,14 @@ const BASE_URL =
 // ====== BOT ======
 const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 90_000 });
 
-// الدول (زرار)
+// الدول (زرار + أكواد SearchAPI)
 const COUNTRIES = {
-  sa: { geo: "SA", name: "السعودية 🇸🇦" },
-  eg: { geo: "EG", name: "مصر 🇪🇬" },
-  ae: { geo: "AE", name: "الإمارات 🇦🇪" },
-  us: { geo: "US", name: "أمريكا 🇺🇸" },
-  gb: { geo: "GB", name: "بريطانيا 🇬🇧" },
-  in: { geo: "IN", name: "الهند 🇮🇳" }
+  sa: { code: "sa", name: "السعودية 🇸🇦" },
+  eg: { code: "eg", name: "مصر 🇪🇬" },
+  ae: { code: "ae", name: "الإمارات 🇦🇪" },
+  us: { code: "us", name: "أمريكا 🇺🇸" },
+  gb: { code: "gb", name: "بريطانيا 🇬🇧" },
+  in: { code: "in", name: "الهند 🇮🇳" }
 };
 
 function countryKeyboard() {
@@ -44,7 +51,7 @@ function countryKeyboard() {
 
 function sourceKeyboard(cc) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🔥 Google Trends", `src:google:${cc}`)],
+    [Markup.button.callback("🔥 Google Trends (Realtime)", `src:google:${cc}`)],
     [
       Markup.button.callback("▶️ YouTube (قريبًا)", `src:yt:${cc}`),
       Markup.button.callback("𝕏 Twitter (قريبًا)", `src:tw:${cc}`)
@@ -77,56 +84,50 @@ bot.action(/^country:(.+)$/, async ctx => {
 bot.action(/^src:(.+):(.+)$/, async ctx => {
   try {
     await ctx.answerCbQuery();
-    const src = ctx.match[1]; // google | yt | tw
+    const src = ctx.match[1];
     const cc = ctx.match[2];
     const meta = COUNTRIES[cc];
     if (!meta) return ctx.reply("الدولة غير مدعومة.");
 
     if (src === "google") {
-      await ctx.editMessageText(`جارِ جلب ترند ${meta.name} من Google Trends...`);
-      const text = await fetchGoogleTrends(meta.geo, meta.name);
+      await ctx.editMessageText(`جارِ جلب ترند ${meta.name}...`);
+      const text = await fetchTrends(meta.code, meta.name);
       return ctx.reply(text, { disable_web_page_preview: true });
     }
 
-    return ctx.reply("هذا المصدر سيُفعّل قريبًا. المتاح الآن: Google Trends.");
+    return ctx.reply("هذا المصدر قريبًا. شغال الآن: Google Trends فقط.");
   } catch (e) {
     console.error(e);
     return ctx.reply("حصل خطأ غير متوقع.");
   }
 });
 
-// زر الرجوع
+// رجوع للدول
 bot.action("back:countries", async ctx => {
   await ctx.answerCbQuery();
   await ctx.editMessageText("اختر الدولة:", countryKeyboard());
 });
 
-// ====== Google Trends (الإصدار الصحيح: dailyTrends) ======
-async function fetchGoogleTrends(geo, countryName) {
+// ====== SearchAPI Trends ======
+async function fetchTrends(code, countryName) {
   try {
-    const res = await googleTrends.dailyTrends({
-      trendDate: new Date(),
-      geo
-    });
+    const url = `https://www.searchapi.io/api/v1/search?engine=google_trends&geo=${code}&api_key=${SEARCHAPI_KEY}`;
 
-    const data = JSON.parse(res);
-    const list =
-      data?.default?.trendingSearchesDays?.[0]?.trendingSearches || [];
+    const res = await axios.get(url);
+    const items = res.data?.trending_searches || [];
 
-    if (!list.length) {
-      return `لا توجد بيانات ترند متاحة لـ ${countryName} اليوم.`;
-    }
+    if (!items.length) return `لا يوجد ترند متاح لـ ${countryName}.`;
 
-    const top = list.slice(0, 10).map((item, i) => {
-      const title = item.title?.query || "غير معروف";
+    const top = items.slice(0, 10).map((item, i) => {
+      const title = item.title || "غير معروف";
       const url = item?.articles?.[0]?.url || "";
       return `${i + 1}. ${title}${url ? `\n   ${url}` : ""}`;
     });
 
     return `🔥 ترند ${countryName} الآن:\n\n${top.join("\n\n")}`;
   } catch (err) {
-    console.error("DailyTrendsError:", err);
-    return "تعذر جلب الترند من Google Trends حالياً.";
+    console.error(err);
+    return "⚠️ تعذر جلب الترند حالياً. جرب بعد قليل.";
   }
 }
 
@@ -149,6 +150,5 @@ app.listen(PORT, () =>
   console.log(`HTTP server on :${PORT} ${BASE_URL ? "(webhook)" : "(polling)"}`)
 );
 
-// إطفاء نظيف
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
