@@ -1,18 +1,26 @@
 import TelegramBot from "node-telegram-bot-api";
 import express from "express";
 
+const token = process.env.BOT_TOKEN;
+const bot = new TelegramBot(token, { polling: false });
+
 const app = express();
-app.get("/", (req, res) => res.send("Bot running"));
+app.use(express.json());
 
-const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: false });
+// Webhook endpoint
+app.post(`/bot${token}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
 
-try {
-  // احذف أي Webhook سابق وامسح الرسائل المعلقة
-  await bot.deleteWebHook({ drop_pending_updates: true });
-  await bot.startPolling();
-  console.log("Polling started");
-} catch (e) {
-  console.error("Polling error:", e);
-}
+// Test response
+bot.on("message", (msg) => {
+  bot.sendMessage(msg.chat.id, "✅ البوت شغال بالويب هوك!");
+});
 
-app.listen(3000, () => console.log("HTTP server on 3000"));
+// Default page
+app.get("/", (req, res) => res.send("Bot Webhook Active"));
+
+// Start server
+app.listen(3000, () => console.log("Server running on port 3000"));
+console.log("Webhook bot started");
