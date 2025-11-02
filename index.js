@@ -1,79 +1,170 @@
-import TelegramBot from "node-telegram-bot-api";
 import express from "express";
-import Parser from "rss-parser";
+import { Telegraf, Markup } from "telegraf";
+import googleTrends from "google-trends-api";
 
-const token = process.env.BOT_TOKEN;
-if (!token) throw new Error("BOT_TOKEN is required");
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error("❌ BOT_TOKEN مفقود");
+  process.exit(1);
+}
 
-const bot = new TelegramBot(token, { polling: false });
-const app = express();
-const parser = new Parser();
+const PORT = process.env.PORT || 3000;
+const BASE_URL =
+  process.env.RENDER_EXTERNAL_URL ||
+  process.env.BASE_URL || // عيّنه يدويًا إن لزم
+  null;
 
-app.use(express.json());
+const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 9_0000 });
 
-// نقطة الويب هوك
-app.post(`/bot${token}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
+// خريطة الدول: كود قصير -> كود Google Trends
+const COUNTRIES = {
+  sa: { geo: "SA", name: "السعودية 🇸🇦" },
+  eg: { geo: "EG", name: "مصر 🇪🇬" },
+  ae: { geo: "AE", name: "الإمارات 🇦🇪" },
+  us: { geo: "US", name: "أمريكا 🇺🇸" },
+  gb: { geo: "GB", name: "بريطانيا 🇬🇧" },
+  in: { geo: "IN", name: "الهند 🇮🇳" }
+};
+
+// زرار اختيار الدولة
+function countryKeyboard() {
+  const rows = [
+    [
+      Markup.button.callback("🇸🇦 السعودية", "country:sa"),
+      Markup.button.callback("🇪🇬 مصر", "country:eg"),
+      Markup.button.callback("🇦🇪 الإمارات", "country:ae")
+    ],
+    [
+      Markup.button.callback("🇺🇸 أمريكا", "country:us"),
+      Markup.button.callback("🇬🇧 بريطانيا", "country:gb"),
+      Markup.button.callback("🇮🇳 الهند", "country:in")
+    ]
+  ];
+  return Markup.inlineKeyboard(rows);
+}
+
+// زرار اختيار المصدر
+function sourceKeyboard(cc) {
+  const rows = [
+    [Markup.button.callback("🔥 Google Trends", `src:google:${cc}`)],
+    [
+      Markup.button.callback("▶️ YouTube (قريبًا)", `src:yt:${cc}`),
+      Markup.button.callback("𝕏 Twitter (قريبًا)", `src:tw:${cc}`)
+    ],
+    [Markup.button.callback("⬅️ رجوع للدول", "back:countries")]
+  ];
+  return Markup.inlineKeyboard(rows);
+}
+
+bot.start(ctx =>
+  ctx.reply(
+    "✅ البوت جاهز. اكتب /trend لاختيار الدولة والمصدر.",
+  )
+);
+
+bot.command("trend", async ctx => {
+  await ctx.reply("اختر الدولة:", countryKeyboard());
 });
 
-// مصادر RSS (الأول أساسي والثاني احتياطي)
-const RSS_FALLBACKS = [
-  "https://trends.google.com/trending/rss?geo=SA",
-  "https://trends.google.com/trends/trendingsearches/daily/rss?geo=SA"
-];
-
-async function fetchTrendsRSS() {
-  for (const url of RSS_FALLBACKS) {
-    try {
-      const feed = await parser.parseURL(url);
-      if (feed?.items?.length) {
-        return feed.items.slice(0, 10).map((it, i) => `${i + 1}️⃣ ${it.title}`);
-      }
-    } catch (_) {
-      // جرّب الرابط التالي
+// المرحلة 1: استلام الدولة
+bot.action(/^country:(.+)$/, async ctx => {
+  try {
+    await ctx.answerCbQuery();
+    const cc = ctx.match[1];
+    const meta = COUNTRIES[cc];
+    if (!meta) {
+      return ctx.reply("الدولة غير مدعومة الآن.");
     }
-  }
-  throw new Error("No RSS feed returned data");
-}
-
-// مزود احتياطي (اختياري) SearchAPI.io — فعّل إذا أضفت SEARCHAPI_KEY في Render
-async function fetchTrendsSearchAPI() {
-  const key = process.env.SEARCHAPI_KEY;
-  if (!key) throw new Error("SEARCHAPI_KEY missing");
-  const url = `https://www.searchapi.io/api/v1/search?engine=google_trends_trending_now&geo=SA&time=past_24_hours&api_key=${key}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`searchapi failed: ${res.status}`);
-  const data = await res.json();
-  const list = (data?.trends || []).slice(0, 10).map((t, i) => `${i + 1}️⃣ ${t.title}`);
-  if (!list.length) throw new Error("empty trends from searchapi");
-  return list;
-}
-
-// /start
-bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id, "✅ جاهز — أرسل /trend لجلب ترند السعودية 🇸🇦🔥");
-});
-
-// /trend
-bot.onText(/\/trend/, async (msg) => {
-  const chatId = msg.chat.id;
-  try {
-    const list = await fetchTrendsRSS();
-    await bot.sendMessage(chatId, `🔥 ترند السعودية الآن:\n\n${list.join("\n")}`);
-    return;
-  } catch (_) { /* جرّب المزود الاحتياطي إن وُجد */ }
-
-  try {
-    const list = await fetchTrendsSearchAPI();
-    await bot.sendMessage(chatId, `🔥 ترند السعودية الآن (API):\n\n${list.join("\n")}`);
+    await ctx.editMessageText(
+      `الدولة المختارة: ${meta.name}\nاختر المصدر:`,
+      sourceKeyboard(cc)
+    );
   } catch (e) {
     console.error(e);
-    await bot.sendMessage(chatId, "❌ تعذّر جلب الترند الآن. حاول لاحقًا.");
   }
 });
 
-// Healthcheck
-app.get("/", (_req, res) => res.send("Bot Webhook Active ✅"));
-app.listen(3000, () => console.log("Server running on port 3000"));
-console.log("Webhook bot started");
+// المرحلة 2: استلام المصدر
+bot.action(/^src:(.+):(.+)$/, async ctx => {
+  try {
+    await ctx.answerCbQuery();
+    const src = ctx.match[1]; // google | yt | tw
+    const cc = ctx.match[2];
+    const { geo, name } = COUNTRIES[cc] || {};
+    if (!geo) return ctx.reply("الدولة غير مدعومة.");
+
+    if (src === "google") {
+      await ctx.editMessageText(
+        `جارِ جلب ترند ${name} من Google Trends...`
+      );
+      const text = await fetchGoogleTrends(geo, name);
+      return ctx.reply(text, { disable_web_page_preview: true });
+    }
+
+    // المصادر الأخرى Placeholder
+    return ctx.reply(
+      "المصدر هذا سيُفعّل قريبًا. حالياً Google Trends يعمل بشكل كامل."
+    );
+  } catch (e) {
+    console.error(e);
+    return ctx.reply("حصل خطأ غير متوقع.");
+  }
+});
+
+// زر الرجوع
+bot.action("back:countries", async ctx => {
+  await ctx.answerCbQuery();
+  await ctx.editMessageText("اختر الدولة:", countryKeyboard());
+});
+
+// Google Trends: أعلى عمليات البحث اليومية
+async function fetchGoogleTrends(geo, countryName) {
+  try {
+    const res = await googleTrends.trendingSearches({
+      geo, // بعض البلدان لا تدعم dailyTrends بالضبط؛ هذه تجيب الشائع اليوم
+      // trendDate: new Date()  // يمكن تحديد تاريخ إذا رغبت
+    });
+
+    const data = JSON.parse(res);
+    const list =
+      data?.default?.trendingSearchesDays?.[0]?.trendingSearches || [];
+
+    if (!list.length) {
+      return `لا توجد بيانات ترند متاحة اليوم لـ ${countryName}.`;
+    }
+
+    const top = list.slice(0, 10).map((item, i) => {
+      const title = item.title?.query || "غير معروف";
+      const articles = item?.articles?.[0]?.url || "";
+      const num = i + 1;
+      return `${num}. ${title}${articles ? `\n   ${articles}` : ""}`;
+    });
+
+    return `🔥 ترند ${countryName} الآن:\n\n${top.join("\n\n")}`;
+  } catch (err) {
+    console.error("GoogleTrendsError:", err);
+    return "تعذر جلب الترند من Google Trends حالياً.";
+  }
+}
+
+// تشغيل: Webhook على Render أو Polling محلي
+const app = express();
+if (BASE_URL) {
+  const secretPath = `/telegraf/${bot.secretPathComponent()}`;
+  app.use(bot.webhookCallback(secretPath));
+  bot.telegram.setWebhook(`${BASE_URL}${secretPath}`)
+    .then(() => console.log("✅ Webhook متصل:", `${BASE_URL}${secretPath}`))
+    .catch(err => console.error("❌ Webhook Error", err));
+} else {
+  // بدون BASE_URL نشتغل Polling (محلي)
+  bot.launch().then(() => console.log("✅ Bot launched with polling"));
+}
+
+app.get("/", (_, res) => res.send("Trend bot is alive."));
+app.listen(PORT, () =>
+  console.log(`HTTP server on :${PORT} ${BASE_URL ? "(webhook)" : "(polling)"}`)
+);
+
+// إطفاء نظيف
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
