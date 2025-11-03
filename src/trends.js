@@ -8,14 +8,20 @@ const DEFAULT_HEADERS = {
   "Accept-Language": "ar,en-US;q=0.8,en;q=0.7"
 };
 
-// فقط الدول التي تهمنا (مع خرائط slug لموقع trends24)
+// فقط الدول التي تهمنا (مع slug الصحيح لموقع trends24)
 const TRENDS24_SLUG = { sa: "saudi-arabia" };
 
 // ========== X via trends24 ==========
 async function fetchTrends24(countryCode, limit) {
   const slug = TRENDS24_SLUG[countryCode] || countryCode;
   const url = `https://trends24.in/${slug}/`;
-  const { data: html } = await axios.get(url, { timeout: 15000, headers: DEFAULT_HEADERS });
+
+  const { data: html } = await axios.get(url, {
+    timeout: 15000,
+    headers: DEFAULT_HEADERS
+  });
+
+  // نلتقط الروابط النصية (هاشتاقات/عناوين)
   const anchorRegex = /<a\s+href="([^"]+)"[^>]*>(.*?)<\/a>/gim;
   const items = [];
   const seen = new Set();
@@ -24,12 +30,15 @@ async function fetchTrends24(countryCode, limit) {
     let label = stripTags(m[2]).trim();
     if (!label) continue;
     if (/Tag Cloud|Table|Timeline/i.test(label)) continue;
+
     const text = label.startsWith("#") ? label : `#${label.replace(/\s+/g, "")}`;
     const key = text.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
+
     const link = `https://twitter.com/search?q=${encodeURIComponent(text)}&src=trend_click`;
     items.push({ text, link });
+
     if (items.length >= limit) break;
   }
   return items;
@@ -77,7 +86,6 @@ export async function buildInstagramCards(countryCode, limit = 10) {
 }
 
 // ====== Helpers ======
-function stripTags(html) { return html.replace(/<[^>]*>/g, ""); }
-
-// تأكيد التصدير بالاسم — لا يوجد Google هنا
-export { buildXTrendCards, buildInstagramCards };
+function stripTags(html) {
+  return html.replace(/<[^>]*>/g, "");
+}
