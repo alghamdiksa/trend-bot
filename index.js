@@ -1,4 +1,4 @@
-// index.js — Trend Bot (Google + X + Instagram) مع كروت عرض + Fallback وبثّ مجمّع
+// index.js — Trend Bot (Google + X + Instagram) مع كروت عرض + Fallback وبثّ مجمّع + وضع "رسالة واحدة بهاشتاقات"
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import axios from "axios";
@@ -7,6 +7,8 @@ import {
   buildInstagramCards,
   scrapeDailyTrends
 } from "./src/trends.js";
+import { getXHashtags, getGoogleHashtags } from "./src/hashtags.js";
+import { buildUnifiedMessage } from "./src/ui_unified.js";
 
 // ====== ENV ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -40,11 +42,13 @@ function countryKeyboard() {
      Markup.button.callback("🇮🇳 الهند", "country:in")]
   ]);
 }
+
 function sourceKeyboard(cc) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🔥 Google Trends", `src:google:${cc}`)],
-    [Markup.button.callback("𝕏 Twitter", `src:tw:${cc}`),
-     Markup.button.callback("📷 Instagram", `src:ig:${cc}`)],
+    [Markup.button.callback("🔥 Google Trends (هاشتاقات برسالة واحدة)", `src:google:${cc}`)],
+    [Markup.button.callback("𝕏 Twitter (هاشتاقات برسالة واحدة)", `src:tw:${cc}`)],
+    [Markup.button.callback("📷 Instagram (كروت)", `src:ig:${cc}`)],
+    [Markup.button.callback("🧩 Google + X معًا (رسالة واحدة)", `src:unified:${cc}`)],
     [Markup.button.callback("⬅️ رجوع", "back:countries")]
   ]);
 }
@@ -70,16 +74,67 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
 
   if (src === "google") {
     await ctx.editMessageText(`جاري جلب الترند في ${meta.name}...`);
-    const text = await fetchGoogleTrendsSmart(meta.code, meta.name);
-    return ctx.reply(text, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
+    // وضع: هاشتاقات برسالة واحدة
+    const tags = await getGoogleHashtags(meta.code, 10, { axiosInstance: axios });
+    if (!tags.length) {
+      // احتياط: طريقتك النصية السابقة
+      const text = await fetchGoogleTrendsSmart(meta.code, meta.name);
+      return ctx.reply(text, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
+    }
+    const html = buildUnifiedMessage({
+      title: `ترند Google — ${meta.name}`,
+      sections: [{ label: "Google", items: tags }]
+    });
+    return ctx.reply(html, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: sourceKeyboard(cc).reply_markup
+    });
   }
 
   if (src === "tw") {
     await ctx.editMessageText(`جاري جلب ترند X في ${meta.name}...`);
-    const cards = await buildXTrendCards(cc, 10);
-    if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
-    await sendCards(ctx, cards);
-    return ctx.reply("✔️ انتهى عرض ترند X.", { reply_markup: sourceKeyboard(cc).reply_markup });
+    // وضع: هاشتاقات برسالة واحدة
+    const tags = await getXHashtags(cc, 10);
+    if (!tags.length) {
+      // احتياط: كروتك القديمة
+      const cards = await buildXTrendCards(cc, 10);
+      if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
+      await sendCards(ctx, cards);
+      return ctx.reply("✔️ انتهى عرض ترند X.", { reply_markup: sourceKeyboard(cc).reply_markup });
+    }
+    const html = buildUnifiedMessage({
+      title: `ترند X — ${meta.name}`,
+      sections: [{ label: "X", items: tags }]
+    });
+    return ctx.reply(html, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: sourceKeyboard(cc).reply_markup
+    });
+  }
+
+  if (src === "unified") {
+    await ctx.editMessageText(`جاري دمج ترند Google وX لـ ${meta.name}...`);
+    const [g, x] = await Promise.all([
+      getGoogleHashtags(meta.code, 10, { axiosInstance: axios }),
+      getXHashtags(cc, 10)
+    ]);
+    if (!g.length && !x.length) {
+      return ctx.reply("⚠️ تعذّر جلب القوائم حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
+    }
+    const html = buildUnifiedMessage({
+      title: `ترند موحّد — ${meta.name}`,
+      sections: [
+        ...(x.length ? [{ label: "X", items: x }] : []),
+        ...(g.length ? [{ label: "Google", items: g }] : [])
+      ]
+    });
+    return ctx.reply(html, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: sourceKeyboard(cc).reply_markup
+    });
   }
 
   if (src === "ig") {
