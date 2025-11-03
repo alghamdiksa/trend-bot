@@ -1,9 +1,10 @@
 import axios from "axios";
-import cheerio from "cheerio";
+import * as cheerio from "cheerio";
 
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 
-// -------- X (Twitter) via trends24 --------
+// ------------------ X (Twitter) via trends24 ------------------
 const TRENDS24 = "https://trends24.in";
 const COUNTRY_SLUG = {
   sa: "saudi-arabia",
@@ -31,19 +32,18 @@ async function getXTrends(country = "sa", limit = 10) {
     });
 
     const top = trends.slice(0, limit);
-    if (!top.length) return [{ title: "تعذر جلب الترند", link: "" }];
+    if (!top.length) return [{ title: "تعذّر جلب ترند X حالياً", link: "" }];
 
-    return top.map(t => ({
+    return top.map((t) => ({
       title: t,
       link: `https://x.com/search?q=${encodeURIComponent(t)}&src=trend_click`
     }));
-
   } catch (e) {
-    return [{ title: "خطأ في جلب ترند X", link: "" }];
+    return [{ title: "خطأ أثناء جلب ترند X", link: "" }];
   }
 }
 
-// -------- Instagram via best-hashtags --------
+// ------------------ Instagram via best-hashtags ------------------
 const BEST_HASHTAGS = "https://best-hashtags.com/hashtag/";
 const IG_TOPIC = {
   sa: "saudiarabia",
@@ -63,12 +63,11 @@ async function getInstagramHashtags(country = "sa", limit = 20) {
     const { data } = await axios.get(url, { headers: { "User-Agent": UA } });
     const $ = cheerio.load(data);
 
-    const block = $("#hashtags").text().trim();
-    const tags = block.match(/#\w+/g) || [];
+    const text = $("#hashtags").text().trim();
+    const tags = text.match(/#\w+/g) || [];
 
     return Array.from(new Set(tags)).slice(0, limit);
-
-  } catch (_) {
+  } catch {
     return ["#saudiarabia", "#ksa", "#trend"];
   }
 }
