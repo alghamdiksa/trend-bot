@@ -181,4 +181,4 @@ function decodeHtml(s = "") {
 }
 
 // تأكيد التصدير بالاسم
-export { buildXTrendCards, buildInstagramCards, scrapeDailyTrends };
+export { buildXTrendCards, buildInstagramCards };
