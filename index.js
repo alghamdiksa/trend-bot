@@ -1,11 +1,14 @@
-// index.js — Trend Bot (Google + X + Instagram)
+// index.js — Trend Bot (Google + X + Instagram) مع كروت عرض
 // يحتاج: BOT_TOKEN و SEARCHAPI_KEY في المتغيرات البيئية
-// يعتمد ملفات: package.json (type: module) + src/trends.js
+// يعتمد ملفات: package.json (type: module) + src/trends.js + src/ui_trend_card.js
 
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import axios from "axios";
-import { getXTrends, getInstagramHashtags } from "./src/trends.js";
+import {
+  buildXTrendCards,
+  buildInstagramCards
+} from "./src/trends.js";
 
 // ====== ENV ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -83,31 +86,38 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
   const meta = COUNTRIES[cc];
   if (!meta) return ctx.reply("الدولة غير مدعومة.");
 
-  // Google Trends
+  // Google Trends (نفس الأسلوب النصي الحالي)
   if (src === "google") {
     await ctx.editMessageText(`جاري جلب الترند في ${meta.name}...`);
     const text = await fetchGoogleTrends(meta.code, meta.name);
-    return ctx.reply(text, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
+    return ctx.reply(text, {
+      disable_web_page_preview: true,
+      reply_markup: sourceKeyboard(cc).reply_markup
+    });
   }
 
-  // X (Twitter) — عبر trends24
+  // X (Twitter) — كروت
   if (src === "tw") {
     await ctx.editMessageText(`جاري جلب ترند X في ${meta.name}...`);
-    const items = await getXTrends(cc, 10);
-    const lines = items.map((it, i) => `${i + 1}. ${it.title}\n${it.link || ""}`.trim());
-    const msg = lines.length ? lines.join("\n\n") : "لا توجد نتائج حالياً.";
-    return ctx.reply(msg, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
+    const cards = await buildXTrendCards(cc, 10);
+    if (!cards?.length) {
+      return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
+    }
+    await sendCards(ctx, cards);
+    return ctx.reply("✔️ انتهى عرض ترند X.", { reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
-  // Instagram — هاشتاقات رائجة
+  // Instagram — كروت هاشتاقات
   if (src === "ig") {
     await ctx.editMessageText(`جاري جلب هاشتاقات إنستقرام لـ ${meta.name}...`);
-    const tags = await getInstagramHashtags(cc, 20);
-    const block = Array.isArray(tags) ? tags.join(" ") : String(tags);
-    return ctx.reply(`انسخ الهاشتاقات واستخدمها:\n\n${block}`, { reply_markup: sourceKeyboard(cc).reply_markup });
+    const cards = await buildInstagramCards(cc, 10);
+    if (!cards?.length) {
+      return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
+    }
+    await sendCards(ctx, cards);
+    return ctx.reply("✔️ انتهى عرض هاشتاقات إنستقرام.", { reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
-  // غير ذلك
   return ctx.reply("💡 مصدر غير معروف.", { reply_markup: sourceKeyboard(cc).reply_markup });
 });
 
@@ -158,6 +168,16 @@ async function fetchGoogleTrends(geoCode, countryName) {
     return "⚠️ حصل خطأ أثناء جلب الترند.\nحاول مرة ثانية.";
   }
 }
+
+// ====== إرسال الكروت بتنسيق صحيح ======
+async function sendCards(ctx, cards = []) {
+  for (const c of cards) {
+    // c = { text, reply_markup }
+    await ctx.reply(c.text, { ...c, parse_mode: "Markdown", disable_web_page_preview: true });
+    await sleep(250); // تهدئة بسيطة حتى لا يعتبرها تيليجرام سبام
+  }
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ====== SERVER / WEBHOOK ======
 const app = express();
