@@ -1,8 +1,10 @@
+// src/trends.js — resilient scraping with proxy fallback for Render
 import axios from "axios";
 import * as cheerio from "cheerio";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
+const HDR = { headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml" } };
 
 // ------------------ X (Twitter) via trends24 ------------------
 const TRENDS24 = "https://trends24.in";
@@ -16,29 +18,51 @@ const COUNTRY_SLUG = {
   om: "oman"
 };
 
+// Try direct fetch then fallback to proxy reader
+async function fetchHtmlWithFallback(url) {
+  try {
+    const { data } = await axios.get(url, HDR);
+    return String(data);
+  } catch {
+    // proxy via r.jina.ai to bypass CF blocks on Render
+    const proxied = `https://r.jina.ai/http://${url.replace(/^https?:\/\//, "")}`;
+    const { data } = await axios.get(proxied, HDR);
+    return String(data);
+  }
+}
+
 async function getXTrends(country = "sa", limit = 10) {
   try {
     const slug = COUNTRY_SLUG[country] || "saudi-arabia";
     const url = `${TRENDS24}/${slug}/`;
 
-    const { data } = await axios.get(url, { headers: { "User-Agent": UA } });
-    const $ = cheerio.load(data);
+    const html = await fetchHtmlWithFallback(url);
+    const $ = cheerio.load(html);
 
-    const trends = [];
-    $(".trend-card .trend-card__list li a").each((_, a) => {
+    // Select both original site structure and simplified proxy HTML
+    const anchors =
+      $(".trend-card .trend-card__list li a").toArray().length
+        ? $(".trend-card .trend-card__list li a")
+        : $("a"); // broad fallback
+
+    const raw = [];
+    anchors.each((_, a) => {
       const t = $(a).text().trim();
       if (!t || /^more/i.test(t)) return;
-      trends.push(t);
+      // skip very long junk
+      if (t.length > 80) return;
+      raw.push(t);
     });
 
-    const top = trends.slice(0, limit);
-    if (!top.length) return [{ title: "تعذّر جلب ترند X حالياً", link: "" }];
+    // De-dup and trim
+    const uniq = Array.from(new Set(raw)).slice(0, limit);
+    if (!uniq.length) return [{ title: "تعذّر جلب ترند X حالياً", link: "" }];
 
-    return top.map((t) => ({
+    return uniq.map((t) => ({
       title: t,
       link: `https://x.com/search?q=${encodeURIComponent(t)}&src=trend_click`
     }));
-  } catch (e) {
+  } catch {
     return [{ title: "خطأ أثناء جلب ترند X", link: "" }];
   }
 }
@@ -60,13 +84,18 @@ async function getInstagramHashtags(country = "sa", limit = 20) {
     const topic = IG_TOPIC[country] || "saudiarabia";
     const url = `${BEST_HASHTAGS}${topic}/`;
 
-    const { data } = await axios.get(url, { headers: { "User-Agent": UA } });
-    const $ = cheerio.load(data);
+    const html = await fetchHtmlWithFallback(url);
+    const $ = cheerio.load(html);
 
-    const text = $("#hashtags").text().trim();
-    const tags = text.match(/#\w+/g) || [];
+    // Prefer original #hashtags block; else parse all text for hashtags
+    let text = $("#hashtags").text().trim();
+    if (!text) text = $.root().text(); // proxy fallback
 
-    return Array.from(new Set(tags)).slice(0, limit);
+    const tags = (text.match(/#[\p{L}0-9_]+/gu) || []) // Unicode letters
+      .map((t) => t.toLowerCase());
+
+    const uniq = Array.from(new Set(tags)).slice(0, limit);
+    return uniq.length ? uniq : ["#saudiarabia", "#ksa", "#trend"];
   } catch {
     return ["#saudiarabia", "#ksa", "#trend"];
   }
