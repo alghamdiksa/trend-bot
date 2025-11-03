@@ -1,28 +1,19 @@
-// index.js — Trend Bot (Google + X + Instagram) مع كروت عرض
-// يحتاج: BOT_TOKEN و SEARCHAPI_KEY في المتغيرات البيئية
-// يعتمد ملفات: package.json (type: module) + src/trends.js + src/ui_trend_card.js
-
+// index.js — Trend Bot (Google + X + Instagram) مع كروت عرض + Fallback وبثّ مجمّع
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import axios from "axios";
 import {
   buildXTrendCards,
-  buildInstagramCards
+  buildInstagramCards,
+  scrapeDailyTrends
 } from "./src/trends.js";
 
 // ====== ENV ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const SEARCHAPI_KEY = process.env.SEARCHAPI_KEY;
 
-if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN missing");
-  process.exit(1);
-}
-if (!SEARCHAPI_KEY) {
-  console.error("❌ SEARCHAPI_KEY missing");
-  process.exit(1);
-}
-
+if (!BOT_TOKEN) { console.error("❌ BOT_TOKEN missing"); process.exit(1); }
+// نكمّل حتى لو SEARCHAPI_KEY ناقص لأن عندنا Fallback
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || null;
 
@@ -38,29 +29,22 @@ const COUNTRIES = {
   in: { code: "IN", name: "🇮🇳 الهند" }
 };
 
-// ====== KEYBOARDS ======
+// ====== Keyboards ======
 function countryKeyboard() {
   return Markup.inlineKeyboard([
-    [
-      Markup.button.callback("🇸🇦 السعودية", "country:sa"),
-      Markup.button.callback("🇪🇬 مصر", "country:eg"),
-      Markup.button.callback("🇦🇪 الإمارات", "country:ae")
-    ],
-    [
-      Markup.button.callback("🇺🇸 أمريكا", "country:us"),
-      Markup.button.callback("🇬🇧 بريطانيا", "country:gb"),
-      Markup.button.callback("🇮🇳 الهند", "country:in")
-    ]
+    [Markup.button.callback("🇸🇦 السعودية", "country:sa"),
+     Markup.button.callback("🇪🇬 مصر", "country:eg"),
+     Markup.button.callback("🇦🇪 الإمارات", "country:ae")],
+    [Markup.button.callback("🇺🇸 أمريكا", "country:us"),
+     Markup.button.callback("🇬🇧 بريطانيا", "country:gb"),
+     Markup.button.callback("🇮🇳 الهند", "country:in")]
   ]);
 }
-
 function sourceKeyboard(cc) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔥 Google Trends", `src:google:${cc}`)],
-    [
-      Markup.button.callback("𝕏 Twitter", `src:tw:${cc}`),
-      Markup.button.callback("📷 Instagram", `src:ig:${cc}`)
-    ],
+    [Markup.button.callback("𝕏 Twitter", `src:tw:${cc}`),
+     Markup.button.callback("📷 Instagram", `src:ig:${cc}`)],
     [Markup.button.callback("⬅️ رجوع", "back:countries")]
   ]);
 }
@@ -69,7 +53,6 @@ function sourceKeyboard(cc) {
 bot.start(ctx => ctx.reply("✅ جاهز. اكتب /trend لاختيار الدولة."));
 bot.command("trend", ctx => ctx.reply("اختر الدولة:", countryKeyboard()));
 
-// اختيار الدولة
 bot.action(/^country:(.+)$/, async ctx => {
   await ctx.answerCbQuery();
   const cc = ctx.match[1];
@@ -78,42 +61,31 @@ bot.action(/^country:(.+)$/, async ctx => {
   await ctx.editMessageText(`الدولة المختارة: ${meta.name}\nاختر المصدر:`, sourceKeyboard(cc));
 });
 
-// اختيار المصدر
 bot.action(/^src:(.+):(.+)$/, async ctx => {
   await ctx.answerCbQuery();
-  const src = ctx.match[1];     // google | tw | ig
-  const cc = ctx.match[2];      // sa | eg | ...
+  const src = ctx.match[1];
+  const cc = ctx.match[2];
   const meta = COUNTRIES[cc];
   if (!meta) return ctx.reply("الدولة غير مدعومة.");
 
-  // Google Trends (نفس الأسلوب النصي الحالي)
   if (src === "google") {
     await ctx.editMessageText(`جاري جلب الترند في ${meta.name}...`);
-    const text = await fetchGoogleTrends(meta.code, meta.name);
-    return ctx.reply(text, {
-      disable_web_page_preview: true,
-      reply_markup: sourceKeyboard(cc).reply_markup
-    });
+    const text = await fetchGoogleTrendsSmart(meta.code, meta.name);
+    return ctx.reply(text, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
-  // X (Twitter) — كروت
   if (src === "tw") {
     await ctx.editMessageText(`جاري جلب ترند X في ${meta.name}...`);
     const cards = await buildXTrendCards(cc, 10);
-    if (!cards?.length) {
-      return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
-    }
+    if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
     await sendCards(ctx, cards);
     return ctx.reply("✔️ انتهى عرض ترند X.", { reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
-  // Instagram — كروت هاشتاقات
   if (src === "ig") {
     await ctx.editMessageText(`جاري جلب هاشتاقات إنستقرام لـ ${meta.name}...`);
     const cards = await buildInstagramCards(cc, 10);
-    if (!cards?.length) {
-      return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
-    }
+    if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
     await sendCards(ctx, cards);
     return ctx.reply("✔️ انتهى عرض هاشتاقات إنستقرام.", { reply_markup: sourceKeyboard(cc).reply_markup });
   }
@@ -121,19 +93,25 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
   return ctx.reply("💡 مصدر غير معروف.", { reply_markup: sourceKeyboard(cc).reply_markup });
 });
 
-// رجوع لاختيار الدولة
 bot.action("back:countries", async ctx => {
   await ctx.answerCbQuery();
   ctx.editMessageText("اختر الدولة:", countryKeyboard());
 });
 
-// ====== Google Trends (SearchAPI.io) ======
-async function fetchGoogleTrends(geoCode, countryName) {
+// زر "نسخ" — يرسل نصًا جاهزًا للنسخ (Telegram لا ينسخ تلقائي)
+bot.action(/^copy_(.+)$/, async ctx => {
+  await ctx.answerCbQuery("تم تجهيز النص للنسخ");
+  const q = ctx.match[1];
+  await ctx.reply(`📋 انسخ هذا النص:\n${q}`);
+});
+
+// ====== Google Trends (مع Fallback تلقائي) ======
+async function fetchGoogleTrendsSmart(geoCode, countryName) {
   try {
     const url = "https://www.searchapi.io/api/v1/search";
     const params = {
       engine: "google_trends_trending_now",
-      geo: geoCode,              // SA, EG, ...
+      geo: geoCode,
       time: "past_24_hours",
       hl: "ar",
       api_key: SEARCHAPI_KEY
@@ -156,25 +134,32 @@ async function fetchGoogleTrends(geoCode, countryName) {
             }
           });
           link = news?.news?.[0]?.link || "";
-        } catch (_) {}
+        } catch {}
       }
       const title = t.query || "غير معروف";
       return `${i + 1}. ${title}${link ? `\n${link}` : ""}`;
     }));
 
     return `🔥 ترند ${countryName} الآن:\n\n${enriched.join("\n\n")}`;
-  } catch (e) {
-    console.error("TREND ERROR:", e?.response?.data || e.message);
-    return "⚠️ حصل خطأ أثناء جلب الترند.\nحاول مرة ثانية.";
+  } catch {
+    // إذا خلصت الحصة أو صار خطأ، نستخدم Fallback المجاني
+    const fallback = await scrapeDailyTrends(geoCode, 10);
+    if (!fallback.length) return "⚠️ تعذّر جلب ترند Google حاليًا.";
+    const lines = fallback.map((t, i) => `${i + 1}. ${t.title}\n${t.url}`).join("\n\n");
+    return `🔥 ترند ${countryName} (Fallback):\n\n${lines}`;
   }
 }
 
-// ====== إرسال الكروت بتنسيق صحيح ======
+// ====== إرسال الكروت بدُفعات ======
 async function sendCards(ctx, cards = []) {
-  for (const c of cards) {
-    // c = { text, reply_markup }
-    await ctx.reply(c.text, { ...c, parse_mode: "Markdown", disable_web_page_preview: true });
-    await sleep(250); // تهدئة بسيطة حتى لا يعتبرها تيليجرام سبام
+  // نقسّم الكروت إلى مجموعات كل مجموعة 5 كروت ونرسل كل مجموعة برسالة واحدة
+  const chunk = (arr, n) => arr.reduce((a,_,i)=> (i%n? a[a.length-1].push(arr[i]) : a.push([arr[i]]), a), []);
+  for (const group of chunk(cards, 5)) {
+    const text = group.map(c => c.text).join("\n\n");
+    // نستخدم أزرار آخر كرت في المجموعة كلوحة سفلية موحّدة
+    const kb = { inline_keyboard: group.at(-1)?.reply_markup?.inline_keyboard || [] };
+    await ctx.reply(text, { parse_mode: "Markdown", disable_web_page_preview: true, reply_markup: kb });
+    await sleep(300);
   }
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -186,12 +171,10 @@ app.get("/", (_, res) => res.send("✅ Bot is running"));
 (async () => {
   try {
     if (BASE_URL) {
-      // Webhook على Render
       const middleware = await bot.createWebhook({ domain: BASE_URL });
       app.use(middleware);
       console.log(`✅ Webhook set at ${BASE_URL}`);
     } else {
-      // Polling محلي
       await bot.launch();
       console.log("✅ Bot launched with polling");
     }
@@ -199,7 +182,6 @@ app.get("/", (_, res) => res.send("✅ Bot is running"));
     console.error("❌ Webhook/Polling init error:", err);
     process.exit(1);
   }
-
   app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
 })();
 
