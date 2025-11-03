@@ -1,189 +1,79 @@
-// index.js — Trend Bot (Google + X + Instagram) مع وضع رسالة واحدة للهاشتاقات + إصلاحات Google
+// index.js — Trend Bot (Saudi only) — X (هاشتاقات برسالة واحدة) + Instagram (كروت) — بدون Google نهائيًا
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
-import axios from "axios";
 import {
   buildXTrendCards,
-  buildInstagramCards,
-  scrapeDailyTrends
+  buildInstagramCards
 } from "./src/trends.js";
-import * as Hashtags from "./src/hashtags.js";        // استيراد آمن
+import * as Hashtags from "./src/hashtags.js";
 import { buildUnifiedMessage } from "./src/ui_unified.js";
 
 // ====== ENV ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const SEARCHAPI_KEY = process.env.SEARCHAPI_KEY;
-
 if (!BOT_TOKEN) { console.error("❌ BOT_TOKEN missing"); process.exit(1); }
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || null;
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// ====== COUNTRIES ======
-const COUNTRIES = {
-  sa: { code: "SA", name: "🇸🇦 السعودية" },
-  eg: { code: "EG", name: "🇪🇬 مصر" },
-  ae: { code: "AE", name: "🇦🇪 الإمارات" },
-  us: { code: "US", name: "🇺🇸 أمريكا" },
-  gb: { code: "GB", name: "🇬🇧 بريطانيا" },
-  in: { code: "IN", name: "🇮🇳 الهند" }
-};
+// ====== ثابت: السعودية فقط ======
+const SA = { code: "SA", cc: "sa", name: "🇸🇦 السعودية" };
 
 // ====== Keyboards ======
-function countryKeyboard() {
+function sourceKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🇸🇦 السعودية", "country:sa"),
-     Markup.button.callback("🇪🇬 مصر", "country:eg"),
-     Markup.button.callback("🇦🇪 الإمارات", "country:ae")],
-    [Markup.button.callback("🇺🇸 أمريكا", "country:us"),
-     Markup.button.callback("🇬🇧 بريطانيا", "country:gb"),
-     Markup.button.callback("🇮🇳 الهند", "country:in")]
-  ]);
-}
-function sourceKeyboard(cc) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback("🔥 Google Trends (هاشتاقات برسالة واحدة)", `src:google:${cc}`)],
-    [Markup.button.callback("𝕏 Twitter (هاشتاقات برسالة واحدة)", `src:tw:${cc}`)],
-    [Markup.button.callback("📷 Instagram (كروت)", `src:ig:${cc}`)],
-    [Markup.button.callback("🧩 Google + X معًا (رسالة واحدة)", `src:unified:${cc}`)],
-    [Markup.button.callback("⬅️ رجوع", "back:countries")]
+    [Markup.button.callback("𝕏 Twitter — هاشتاقات برسالة واحدة", "src:tw")],
+    [Markup.button.callback("📷 Instagram — كروت", "src:ig")]
   ]);
 }
 
 // ====== BOT COMMANDS ======
-bot.start(ctx => ctx.reply("✅ جاهز. اكتب /trend لاختيار الدولة."));
-bot.command("trend", ctx => ctx.reply("اختر الدولة:", countryKeyboard()));
+bot.start(ctx => ctx.reply("✅ جاهز للسعودية فقط. اكتب /trend لاختيار المصدر."));
+bot.command("trend", ctx => ctx.reply(`اختر المصدر لـ ${SA.name}:`, sourceKeyboard()));
 
-bot.action(/^country:(.+)$/, async ctx => {
-  await ctx.answerCbQuery();
-  const cc = ctx.match[1];
-  const meta = COUNTRIES[cc];
-  if (!meta) return ctx.reply("الدولة غير مدعومة.");
-  await ctx.editMessageText(`الدولة المختارة: ${meta.name}\nاختر المصدر:`, sourceKeyboard(cc));
-});
-
-bot.action(/^src:(.+):(.+)$/, async ctx => {
+bot.action(/^src:(.+)$/, async ctx => {
   await ctx.answerCbQuery();
   const src = ctx.match[1];
-  const cc = ctx.match[2];
-  const meta = COUNTRIES[cc];
-  if (!meta) return ctx.reply("الدولة غير مدعومة.");
-
-  if (src === "google") {
-    await ctx.editMessageText(`جاري جلب الترند في ${meta.name}...`);
-    const tags = await Hashtags.getGoogleHashtags(meta.code, 10, { axiosInstance: axios });
-    if (!tags.length) {
-      const text = await fetchGoogleTrendsSmart(meta.code, meta.name);
-      return ctx.reply(text, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
-    }
-    const html = buildUnifiedMessage({
-      title: `ترند Google — ${meta.name}`,
-      sections: [{ label: "Google", items: tags }]
-    });
-    return ctx.reply(html, { parse_mode: "HTML", disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
-  }
 
   if (src === "tw") {
-    await ctx.editMessageText(`جاري جلب ترند X في ${meta.name}...`);
-    const tags = await Hashtags.getXHashtags(cc, 10);
+    await ctx.editMessageText(`جاري جلب ترند X في ${SA.name}...`);
+    // هاشتاقات برسالة واحدة
+    const tags = await Hashtags.getXHashtags(SA.cc, 10);
     if (!tags.length) {
-      const cards = await buildXTrendCards(cc, 10);
-      if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
+      // احتياط: رجوع للكروت
+      const cards = await buildXTrendCards(SA.cc, 10);
+      if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard().reply_markup });
       await sendCards(ctx, cards);
-      return ctx.reply("✔️ انتهى عرض ترند X.", { reply_markup: sourceKeyboard(cc).reply_markup });
+      return ctx.reply("✔️ انتهى عرض ترند X.", { reply_markup: sourceKeyboard().reply_markup });
     }
     const html = buildUnifiedMessage({
-      title: `ترند X — ${meta.name}`,
+      title: `ترند X — ${SA.name}`,
       sections: [{ label: "X", items: tags }]
     });
-    return ctx.reply(html, { parse_mode: "HTML", disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
-  }
-
-  if (src === "unified") {
-    await ctx.editMessageText(`جاري دمج ترند Google وX لـ ${meta.name}...`);
-    const [g, x] = await Promise.all([
-      Hashtags.getGoogleHashtags(meta.code, 10, { axiosInstance: axios }),
-      Hashtags.getXHashtags(cc, 10)
-    ]);
-    if (!g.length && !x.length) {
-      return ctx.reply("⚠️ تعذّر جلب القوائم حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
-    }
-    const html = buildUnifiedMessage({
-      title: `ترند موحّد — ${meta.name}`,
-      sections: [
-        ...(x.length ? [{ label: "X", items: x }] : []),
-        ...(g.length ? [{ label: "Google", items: g }] : [])
-      ]
+    return ctx.reply(html, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: sourceKeyboard().reply_markup
     });
-    return ctx.reply(html, { parse_mode: "HTML", disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
   if (src === "ig") {
-    await ctx.editMessageText(`جاري جلب هاشتاقات إنستقرام لـ ${meta.name}...`);
-    const cards = await buildInstagramCards(cc, 10);
-    if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
+    await ctx.editMessageText(`جاري جلب هاشتاقات إنستقرام لـ ${SA.name}...`);
+    const cards = await buildInstagramCards(SA.cc, 10);
+    if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard().reply_markup });
     await sendCards(ctx, cards);
-    return ctx.reply("✔️ انتهى عرض هاشتاقات إنستقرام.", { reply_markup: sourceKeyboard(cc).reply_markup });
+    return ctx.reply("✔️ انتهى عرض هاشتاقات إنستقرام.", { reply_markup: sourceKeyboard().reply_markup });
   }
 
-  return ctx.reply("💡 مصدر غير معروف.", { reply_markup: sourceKeyboard(cc).reply_markup });
+  return ctx.reply("💡 مصدر غير معروف.", { reply_markup: sourceKeyboard().reply_markup });
 });
 
-bot.action("back:countries", async ctx => {
-  await ctx.answerCbQuery();
-  ctx.editMessageText("اختر الدولة:", countryKeyboard());
-});
-
+// زر "نسخ" — يرسل نصًا جاهزًا للنسخ (Telegram لا ينسخ تلقائي)
 bot.action(/^copy_(.+)$/, async ctx => {
   await ctx.answerCbQuery("تم تجهيز النص للنسخ");
   const q = ctx.match[1];
   await ctx.reply(`📋 انسخ هذا النص:\n${q}`);
 });
-
-// ====== Google Trends (نصي احتياطي قديم)
-async function fetchGoogleTrendsSmart(geoCode, countryName) {
-  try {
-    const url = "https://www.searchapi.io/api/v1/search";
-    const params = {
-      engine: "google_trends_trending_now",
-      geo: geoCode,
-      time: "past_24_hours",
-      hl: "ar",
-      api_key: SEARCHAPI_KEY
-    };
-    const { data } = await axios.get(url, { params });
-
-    const items = Array.isArray(data?.trends) ? data.trends : [];
-    if (!items.length) return `لا يوجد ترند متاح لـ ${countryName} الآن.`;
-
-    const top = items.slice(0, 10);
-    const enriched = await Promise.all(top.map(async (t, i) => {
-      let link = "";
-      if (t.news_token) {
-        try {
-          const { data: news } = await axios.get(url, {
-            params: {
-              engine: "google_trends_trending_now_news",
-              news_token: t.news_token,
-              api_key: SEARCHAPI_KEY
-            }
-          });
-          link = news?.news?.[0]?.link || "";
-        } catch {}
-      }
-      const title = t.query || "غير معروف";
-      return `${i + 1}. ${title}${link ? `\n${link}` : ""}`;
-    }));
-
-    return `🔥 ترند ${countryName} الآن:\n\n${enriched.join("\n\n")}`;
-  } catch {
-    const fallback = await scrapeDailyTrends(geoCode, 10);
-    if (!fallback.length) return "⚠️ تعذّر جلب ترند Google حاليًا.";
-    const lines = fallback.map((t, i) => `${i + 1}. ${t.title}\n${t.url}`).join("\n\n");
-    return `🔥 ترند ${countryName} (Fallback):\n\n${lines}`;
-  }
-}
 
 // ====== إرسال الكروت بدُفعات ======
 async function sendCards(ctx, cards = []) {
@@ -198,7 +88,7 @@ async function sendCards(ctx, cards = []) {
 
 // ====== SERVER / WEBHOOK ======
 const app = express();
-app.get("/", (_, res) => res.send("✅ Bot is running"));
+app.get("/", (_, res) => res.send("✅ Bot is running (Saudi only)"));
 
 (async () => {
   try {
