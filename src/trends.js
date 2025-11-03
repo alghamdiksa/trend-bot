@@ -1,52 +1,82 @@
-// src/trends.js
-import axios from "axios";
+// === أضِف في نهاية src/trends.js ===
 
-// ملاحظة: غيّر مصادر الجلب حسب ما كنت تستخدمه سابقاً.
-// هنا نفترض أن لديك مفاتيح/نقاط نهاية جاهزة أو من مزود خارجي.
-
-export async function getXTrends() {
-  // ارجع مصفوفة من: { tag: "#Example", url: "https://twitter.com/hashtag/Example" }
-  // عدّل الجلب الحقيقي هنا ثم نظّف الخرج إلى هاشتاقات فقط
-  const raw = await fetchXSomehow(); // ضع دالتك الحالية بدل هذا
-  const unique = new Set();
+// تبني هاشتاقات X بالاعتماد على كروتك الحالية
+export async function getXHashtags(cc, limit = 10) {
+  // لديك مسبقاً buildXTrendCards() في هذا الملف
+  const cards = await buildXTrendCards(cc, limit * 2); // نجيب أكثر ونفلتر
+  const seen = new Set();
   const items = [];
 
-  for (const t of raw.slice(0, 15)) {
-    // نحاول استخراج هاشتاق فقط
-    const clean = (t.name || t.title || "").trim();
-    if (!clean) continue;
-    const hash = clean.startsWith("#") ? clean : `#${clean.replace(/\s+/g, "")}`;
-    if (unique.has(hash.toLowerCase())) continue;
-    unique.add(hash.toLowerCase());
-    items.push({
-      tag: hash,
-      url: `https://twitter.com/hashtag/${encodeURIComponent(hash.replace("#", ""))}?src=trend_click`
-    });
+  for (const c of cards || []) {
+    // نحاول استخراج الهاشتاقات من نص الكرت
+    const text = (c?.text || "").toString();
+    const matches = text.match(/#[\p{L}\p{N}_]+/gu) || []; // يدعم العربية واللاتينية
+    for (const m of matches) {
+      const tag = m.trim();
+      const key = tag.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({
+        tag,
+        url: `https://twitter.com/hashtag/${encodeURIComponent(tag.replace(/^#/, ""))}?src=trend_click`
+      });
+      if (items.length >= limit) break;
+    }
+    if (items.length >= limit) break;
   }
   return items;
 }
 
-export async function getGoogleTrends() {
-  // ارجع مصفوفة من: { tag: "#Keyword", url: "https://www.google.com/search?q=Keyword" }
-  const raw = await fetchGoogleSomehow(); // ضع دالتك الحالية بدل هذا
-  const unique = new Set();
-  const items = [];
+// Google: نفس منطقك (SearchAPI + Fallback) لكن نخرجه كهاشتاقات
+export async function getGoogleHashtags(geoCode, limit = 10, opts = {}) {
+  const { axiosInstance } = opts;
+  const ax = axiosInstance || (await import("axios")).default;
+  const apiKey = process.env.SEARCHAPI_KEY;
 
-  for (const t of raw.slice(0, 15)) {
-    const clean = (t.query || t.title || t.name || "").trim();
-    if (!clean) continue;
-    const normalized = clean.replace(/[#]+/g, "").replace(/\s+/g, "_");
-    const hash = `#${normalized}`;
-    if (unique.has(hash.toLowerCase())) continue;
-    unique.add(hash.toLowerCase());
-    items.push({
-      tag: hash,
-      url: `https://www.google.com/search?q=${encodeURIComponent(clean)}`
+  // نحاول الـ API أولاً
+  try {
+    const { data } = await ax.get("https://www.searchapi.io/api/v1/search", {
+      params: {
+        engine: "google_trends_trending_now",
+        geo: geoCode,
+        time: "past_24_hours",
+        hl: "ar",
+        api_key: apiKey
+      }
     });
-  }
-  return items;
-}
+    const trends = Array.isArray(data?.trends) ? data.trends.slice(0, limit * 2) : [];
+    const out = [];
+    const seen = new Set();
+    for (const t of trends) {
+      const q = (t?.query || "").toString().trim();
+      if (!q) continue;
+      const tag = "#" + q.replace(/[#]+/g, "").replace(/\s+/g, "_");
+      const key = tag.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ tag, url: `https://www.google.com/search?q=${encodeURIComponent(q)}` });
+      if (out.length >= limit) break;
+    }
+    if (out.length) return out;
+  } catch {}
 
-// ضع دوال الجلب الفعلية هنا أو استوردها من كودك السابق
-async function fetchXSomehow() { return []; }
-async function fetchGoogleSomehow() { return []; }
+  // Fallback مجاني لديك مسبقاً
+  try {
+    const fallback = await scrapeDailyTrends(geoCode, limit * 2);
+    const out = [];
+    const seen = new Set();
+    for (const t of fallback || []) {
+      const title = (t?.title || "").toString().trim();
+      if (!title) continue;
+      const tag = "#" + title.replace(/[#]+/g, "").replace(/\s+/g, "_");
+      const key = tag.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ tag, url: t?.url || `https://www.google.com/search?q=${encodeURIComponent(title)}` });
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
