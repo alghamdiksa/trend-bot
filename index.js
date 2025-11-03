@@ -1,3 +1,4 @@
+// package.json يجب أن يحتوي: { "type": "module" }
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import axios from "axios";
@@ -16,21 +17,18 @@ if (!SEARCHAPI_KEY) {
 }
 
 const PORT = process.env.PORT || 3000;
-const BASE_URL =
-  process.env.RENDER_EXTERNAL_URL ||
-  process.env.BASE_URL ||
-  null;
+const BASE_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || null;
 
 const bot = new Telegraf(BOT_TOKEN);
 
 // ====== COUNTRIES ======
 const COUNTRIES = {
-  sa: { code: "sa", name: "🇸🇦 السعودية" },
-  eg: { code: "eg", name: "🇪🇬 مصر" },
-  ae: { code: "ae", name: "🇦🇪 الإمارات" },
-  us: { code: "us", name: "🇺🇸 أمريكا" },
-  gb: { code: "gb", name: "🇬🇧 بريطانيا" },
-  in: { code: "in", name: "🇮🇳 الهند" }
+  sa: { code: "SA", name: "🇸🇦 السعودية" },
+  eg: { code: "EG", name: "🇪🇬 مصر" },
+  ae: { code: "AE", name: "🇦🇪 الإمارات" },
+  us: { code: "US", name: "🇺🇸 أمريكا" },
+  gb: { code: "GB", name: "🇬🇧 بريطانيا" },
+  in: { code: "IN", name: "🇮🇳 الهند" }
 };
 
 // ====== KEYBOARDS ======
@@ -68,13 +66,8 @@ bot.action(/^country:(.+)$/, async ctx => {
   await ctx.answerCbQuery();
   const cc = ctx.match[1];
   const meta = COUNTRIES[cc];
-
   if (!meta) return ctx.reply("الدولة غير مدعومة.");
-
-  await ctx.editMessageText(
-    `الدولة المختارة: ${meta.name}\nاختر المصدر:`,
-    sourceKeyboard(cc)
-  );
+  await ctx.editMessageText(`الدولة المختارة: ${meta.name}\nاختر المصدر:`, sourceKeyboard(cc));
 });
 
 bot.action(/^src:(.+):(.+)$/, async ctx => {
@@ -82,7 +75,6 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
   const src = ctx.match[1];
   const cc = ctx.match[2];
   const meta = COUNTRIES[cc];
-
   if (!meta) return ctx.reply("الدولة غير مدعومة.");
 
   if (src === "google") {
@@ -90,7 +82,6 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
     const text = await fetchTrends(meta.code, meta.name);
     return ctx.reply(text, { disable_web_page_preview: true });
   }
-
   return ctx.reply("💡 قريبًا YouTube / Twitter\nالمتاح الآن: Google Trends فقط ✅");
 });
 
@@ -100,25 +91,49 @@ bot.action("back:countries", async ctx => {
 });
 
 // ====== FETCH TRENDS ======
-async function fetchTrends(code, countryName) {
+async function fetchTrends(geoCode, countryName) {
   try {
-    const url = `https://www.searchapi.io/api/v1/search?engine=google_trends_trending_now&geo=${code}&hl=ar&api_key=${SEARCHAPI_KEY}`;
-    
-    const res = await axios.get(url);
-    const items = res.data.trending_searches || [];
+    // 1) Trending Now
+    const url = "https://www.searchapi.io/api/v1/search";
+    const params = {
+      engine: "google_trends_trending_now",
+      geo: geoCode,        // يجب أن تكون بصيغة US, SA, EG ...
+      time: "past_24_hours",
+      hl: "ar",
+      api_key: SEARCHAPI_KEY
+    };
+    const { data } = await axios.get(url, { params });
 
-    if (!items.length)
-      return `لا يوجد ترند متاح لـ ${countryName} الآن.`;
+    const items = Array.isArray(data?.trends) ? data.trends : [];
+    if (!items.length) return `لا يوجد ترند متاح لـ ${countryName} الآن.`;
 
-    const top = items.slice(0, 10).map((item, i) => {
-      const title = item.title || "غير معروف";
-      const link = item?.articles?.[0]?.url || "";
+    // 2) اجلب أول خبر لكل عنصر باستخدام news_token
+    const top = items.slice(0, 10);
+    const enriched = await Promise.all(top.map(async (t, i) => {
+      let link = "";
+      const newsToken = t.news_token;
+      if (newsToken) {
+        try {
+          const newsRes = await axios.get(url, {
+            params: {
+              engine: "google_trends_trending_now_news",
+              news_token: newsToken,
+              api_key: SEARCHAPI_KEY
+            }
+          });
+          const first = newsRes?.data?.news?.[0];
+          link = first?.link || "";
+        } catch (_) {
+          // تجاهل خطأ الخبر، نعرض الترند فقط
+        }
+      }
+      const title = t.query || "غير معروف";
       return `${i + 1}. ${title}${link ? `\n${link}` : ""}`;
-    });
+    }));
 
-    return `🔥 ترند ${countryName} الآن:\n\n${top.join("\n\n")}`;
+    return `🔥 ترند ${countryName} الآن:\n\n${enriched.join("\n\n")}`;
   } catch (e) {
-    console.error("TREND ERROR:", e);
+    console.error("TREND ERROR:", e?.response?.data || e.message);
     return "⚠️ حصل خطأ أثناء جلب الترند.\nحاول مرة ثانية.";
   }
 }
@@ -127,17 +142,25 @@ async function fetchTrends(code, countryName) {
 const app = express();
 app.get("/", (_, res) => res.send("✅ Bot is running"));
 
-if (BASE_URL) {
-  const secret = `/telegraf/${bot.secretPathComponent()}`;
-  app.use(bot.webhookCallback(secret));
-  bot.telegram.setWebhook(`${BASE_URL}${secret}`);
-} else {
-  bot.launch();
-}
+(async () => {
+  try {
+    if (BASE_URL) {
+      // Webhook على Render
+      const middleware = await bot.createWebhook({ domain: BASE_URL });
+      app.use(middleware);
+      console.log(`✅ Webhook set at ${BASE_URL}`);
+    } else {
+      // Polling محلي
+      await bot.launch();
+      console.log("✅ Bot launched with polling");
+    }
+  } catch (err) {
+    console.error("❌ Webhook/Polling init error:", err);
+    process.exit(1);
+  }
 
-app.listen(PORT, () =>
-  console.log(`✅ Server running on port ${PORT}`)
-);
+  app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+})();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
