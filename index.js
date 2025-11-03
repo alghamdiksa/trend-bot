@@ -1,7 +1,11 @@
-// package.json يجب أن يحتوي: { "type": "module" }
+// index.js — Trend Bot (Google + X + Instagram)
+// يحتاج: BOT_TOKEN و SEARCHAPI_KEY في المتغيرات البيئية
+// يعتمد ملفات: package.json (type: module) + src/trends.js
+
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import axios from "axios";
+import { getXTrends, getInstagramHashtags } from "./src/trends.js";
 
 // ====== ENV ======
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -51,8 +55,8 @@ function sourceKeyboard(cc) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔥 Google Trends", `src:google:${cc}`)],
     [
-      Markup.button.callback("▶️ YouTube (قريبًا)", `src:yt:${cc}`),
-      Markup.button.callback("𝕏 Twitter (قريبًا)", `src:tw:${cc}`)
+      Markup.button.callback("𝕏 Twitter", `src:tw:${cc}`),
+      Markup.button.callback("📷 Instagram", `src:ig:${cc}`)
     ],
     [Markup.button.callback("⬅️ رجوع", "back:countries")]
   ]);
@@ -62,6 +66,7 @@ function sourceKeyboard(cc) {
 bot.start(ctx => ctx.reply("✅ جاهز. اكتب /trend لاختيار الدولة."));
 bot.command("trend", ctx => ctx.reply("اختر الدولة:", countryKeyboard()));
 
+// اختيار الدولة
 bot.action(/^country:(.+)$/, async ctx => {
   await ctx.answerCbQuery();
   const cc = ctx.match[1];
@@ -70,34 +75,55 @@ bot.action(/^country:(.+)$/, async ctx => {
   await ctx.editMessageText(`الدولة المختارة: ${meta.name}\nاختر المصدر:`, sourceKeyboard(cc));
 });
 
+// اختيار المصدر
 bot.action(/^src:(.+):(.+)$/, async ctx => {
   await ctx.answerCbQuery();
-  const src = ctx.match[1];
-  const cc = ctx.match[2];
+  const src = ctx.match[1];     // google | tw | ig
+  const cc = ctx.match[2];      // sa | eg | ...
   const meta = COUNTRIES[cc];
   if (!meta) return ctx.reply("الدولة غير مدعومة.");
 
+  // Google Trends
   if (src === "google") {
     await ctx.editMessageText(`جاري جلب الترند في ${meta.name}...`);
-    const text = await fetchTrends(meta.code, meta.name);
-    return ctx.reply(text, { disable_web_page_preview: true });
+    const text = await fetchGoogleTrends(meta.code, meta.name);
+    return ctx.reply(text, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
   }
-  return ctx.reply("💡 قريبًا YouTube / Twitter\nالمتاح الآن: Google Trends فقط ✅");
+
+  // X (Twitter) — عبر trends24
+  if (src === "tw") {
+    await ctx.editMessageText(`جاري جلب ترند X في ${meta.name}...`);
+    const items = await getXTrends(cc, 10);
+    const lines = items.map((it, i) => `${i + 1}. ${it.title}\n${it.link || ""}`.trim());
+    const msg = lines.length ? lines.join("\n\n") : "لا توجد نتائج حالياً.";
+    return ctx.reply(msg, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
+  }
+
+  // Instagram — هاشتاقات رائجة
+  if (src === "ig") {
+    await ctx.editMessageText(`جاري جلب هاشتاقات إنستقرام لـ ${meta.name}...`);
+    const tags = await getInstagramHashtags(cc, 20);
+    const block = Array.isArray(tags) ? tags.join(" ") : String(tags);
+    return ctx.reply(`انسخ الهاشتاقات واستخدمها:\n\n${block}`, { reply_markup: sourceKeyboard(cc).reply_markup });
+  }
+
+  // غير ذلك
+  return ctx.reply("💡 مصدر غير معروف.", { reply_markup: sourceKeyboard(cc).reply_markup });
 });
 
+// رجوع لاختيار الدولة
 bot.action("back:countries", async ctx => {
   await ctx.answerCbQuery();
   ctx.editMessageText("اختر الدولة:", countryKeyboard());
 });
 
-// ====== FETCH TRENDS ======
-async function fetchTrends(geoCode, countryName) {
+// ====== Google Trends (SearchAPI.io) ======
+async function fetchGoogleTrends(geoCode, countryName) {
   try {
-    // 1) Trending Now
     const url = "https://www.searchapi.io/api/v1/search";
     const params = {
       engine: "google_trends_trending_now",
-      geo: geoCode,        // يجب أن تكون بصيغة US, SA, EG ...
+      geo: geoCode,              // SA, EG, ...
       time: "past_24_hours",
       hl: "ar",
       api_key: SEARCHAPI_KEY
@@ -107,25 +133,20 @@ async function fetchTrends(geoCode, countryName) {
     const items = Array.isArray(data?.trends) ? data.trends : [];
     if (!items.length) return `لا يوجد ترند متاح لـ ${countryName} الآن.`;
 
-    // 2) اجلب أول خبر لكل عنصر باستخدام news_token
     const top = items.slice(0, 10);
     const enriched = await Promise.all(top.map(async (t, i) => {
       let link = "";
-      const newsToken = t.news_token;
-      if (newsToken) {
+      if (t.news_token) {
         try {
-          const newsRes = await axios.get(url, {
+          const { data: news } = await axios.get(url, {
             params: {
               engine: "google_trends_trending_now_news",
-              news_token: newsToken,
+              news_token: t.news_token,
               api_key: SEARCHAPI_KEY
             }
           });
-          const first = newsRes?.data?.news?.[0];
-          link = first?.link || "";
-        } catch (_) {
-          // تجاهل خطأ الخبر، نعرض الترند فقط
-        }
+          link = news?.news?.[0]?.link || "";
+        } catch (_) {}
       }
       const title = t.query || "غير معروف";
       return `${i + 1}. ${title}${link ? `\n${link}` : ""}`;
