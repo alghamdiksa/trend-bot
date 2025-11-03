@@ -121,3 +121,5 @@ export async function scrapeDailyTrends(geo, limit = 10) {
   console.error("Google fallback error: no feed found for geo:", geo);
   return [];
 }
+// --- exports guard (لا تلمسه بعد الإضافة) ---
+export { buildXTrendCards, buildInstagramCards, scrapeDailyTrends };
