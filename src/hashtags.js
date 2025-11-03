@@ -1,22 +1,18 @@
-// src/hashtags.js — استخراج هاشتاقات جاهزة للعرض من مصادر X وGoogle بدون تغيير دوالك الأصلية
+// src/hashtags.js — استخراج هاشتاقات جاهزة للعرض من X وGoogle بالاعتماد على trends.js
 import axios from "axios";
-import { buildXTrendCards, scrapeDailyTrends } from "./trends.js";
+import * as Trends from "./trends.js";   // استخدام فضاء اسمي لتفادي مشاكل التصدير
 
 const SEARCHAPI_KEY = process.env.SEARCHAPI_KEY;
 
-/**
- * X: نعتمد دالتك buildXTrendCards ونستخرج الهاشتاقات من نص الكرت.
- * يرجع: [{ tag: "#Something", url: "https://twitter.com/hashtag/Something?src=trend_click" }, ...]
- */
+// X
 export async function getXHashtags(countryCode, limit = 10) {
   try {
-    const cards = await buildXTrendCards(countryCode, Math.max(limit * 2, 20)); // نجيب أكثر ثم نفلتر
+    const cards = await Trends.buildXTrendCards(countryCode, Math.max(limit * 2, 20));
     const seen = new Set();
     const items = [];
-
     for (const c of cards || []) {
       const text = (c?.text || "").toString();
-      const matches = text.match(/#[\p{L}\p{N}_]+/gu) || []; // يدعم العربية واللاتينية
+      const matches = text.match(/#[\p{L}\p{N}_]+/gu) || [];
       for (const m of matches) {
         const tag = m.trim();
         const key = tag.toLowerCase();
@@ -31,18 +27,12 @@ export async function getXHashtags(countryCode, limit = 10) {
       if (items.length >= limit) break;
     }
     return items;
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
-/**
- * Google: نحاول SearchAPI.io أولاً (إن وجد المفتاح)، ثم Fallback عبر scrapeDailyTrends.
- * يرجع: [{ tag: "#Keyword_X", url: "https://www.google.com/search?q=..." }, ...]
- */
+// Google
 export async function getGoogleHashtags(geoCode, limit = 10, { axiosInstance } = {}) {
   const ax = axiosInstance || axios;
-  // API أولاً
   if (SEARCHAPI_KEY) {
     try {
       const { data } = await ax.get("https://www.searchapi.io/api/v1/search", {
@@ -68,14 +58,11 @@ export async function getGoogleHashtags(geoCode, limit = 10, { axiosInstance } =
         if (out.length >= limit) break;
       }
       if (out.length) return out;
-    } catch {
-      // نكمل للـ Fallback
-    }
+    } catch {}
   }
 
-  // Fallback مجاني
   try {
-    const fallback = await scrapeDailyTrends(geoCode, Math.max(limit * 2, 20));
+    const fallback = await Trends.scrapeDailyTrends(geoCode, Math.max(limit * 2, 20));
     const out = [];
     const seen = new Set();
     for (const t of fallback || []) {
@@ -89,7 +76,5 @@ export async function getGoogleHashtags(geoCode, limit = 10, { axiosInstance } =
       if (out.length >= limit) break;
     }
     return out;
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
