@@ -1,4 +1,4 @@
-// index.js — Trend Bot (Google + X + Instagram) مع كروت عرض + Fallback وبثّ مجمّع + وضع "رسالة واحدة بهاشتاقات"
+// index.js — Trend Bot (Google + X + Instagram) مع وضع رسالة واحدة للهاشتاقات + إصلاحات Google
 import express from "express";
 import { Telegraf, Markup } from "telegraf";
 import axios from "axios";
@@ -7,7 +7,7 @@ import {
   buildInstagramCards,
   scrapeDailyTrends
 } from "./src/trends.js";
-import { getXHashtags, getGoogleHashtags } from "./src/hashtags.js";
+import * as Hashtags from "./src/hashtags.js";        // استيراد آمن
 import { buildUnifiedMessage } from "./src/ui_unified.js";
 
 // ====== ENV ======
@@ -15,7 +15,6 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SEARCHAPI_KEY = process.env.SEARCHAPI_KEY;
 
 if (!BOT_TOKEN) { console.error("❌ BOT_TOKEN missing"); process.exit(1); }
-// نكمّل حتى لو SEARCHAPI_KEY ناقص لأن عندنا Fallback
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.RENDER_EXTERNAL_URL || process.env.BASE_URL || null;
 
@@ -42,7 +41,6 @@ function countryKeyboard() {
      Markup.button.callback("🇮🇳 الهند", "country:in")]
   ]);
 }
-
 function sourceKeyboard(cc) {
   return Markup.inlineKeyboard([
     [Markup.button.callback("🔥 Google Trends (هاشتاقات برسالة واحدة)", `src:google:${cc}`)],
@@ -74,10 +72,8 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
 
   if (src === "google") {
     await ctx.editMessageText(`جاري جلب الترند في ${meta.name}...`);
-    // وضع: هاشتاقات برسالة واحدة
-    const tags = await getGoogleHashtags(meta.code, 10, { axiosInstance: axios });
+    const tags = await Hashtags.getGoogleHashtags(meta.code, 10, { axiosInstance: axios });
     if (!tags.length) {
-      // احتياط: طريقتك النصية السابقة
       const text = await fetchGoogleTrendsSmart(meta.code, meta.name);
       return ctx.reply(text, { disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
     }
@@ -85,19 +81,13 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
       title: `ترند Google — ${meta.name}`,
       sections: [{ label: "Google", items: tags }]
     });
-    return ctx.reply(html, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-      reply_markup: sourceKeyboard(cc).reply_markup
-    });
+    return ctx.reply(html, { parse_mode: "HTML", disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
   if (src === "tw") {
     await ctx.editMessageText(`جاري جلب ترند X في ${meta.name}...`);
-    // وضع: هاشتاقات برسالة واحدة
-    const tags = await getXHashtags(cc, 10);
+    const tags = await Hashtags.getXHashtags(cc, 10);
     if (!tags.length) {
-      // احتياط: كروتك القديمة
       const cards = await buildXTrendCards(cc, 10);
       if (!cards?.length) return ctx.reply("لا توجد نتائج حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
       await sendCards(ctx, cards);
@@ -107,18 +97,14 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
       title: `ترند X — ${meta.name}`,
       sections: [{ label: "X", items: tags }]
     });
-    return ctx.reply(html, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-      reply_markup: sourceKeyboard(cc).reply_markup
-    });
+    return ctx.reply(html, { parse_mode: "HTML", disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
   if (src === "unified") {
     await ctx.editMessageText(`جاري دمج ترند Google وX لـ ${meta.name}...`);
     const [g, x] = await Promise.all([
-      getGoogleHashtags(meta.code, 10, { axiosInstance: axios }),
-      getXHashtags(cc, 10)
+      Hashtags.getGoogleHashtags(meta.code, 10, { axiosInstance: axios }),
+      Hashtags.getXHashtags(cc, 10)
     ]);
     if (!g.length && !x.length) {
       return ctx.reply("⚠️ تعذّر جلب القوائم حالياً.", { reply_markup: sourceKeyboard(cc).reply_markup });
@@ -130,11 +116,7 @@ bot.action(/^src:(.+):(.+)$/, async ctx => {
         ...(g.length ? [{ label: "Google", items: g }] : [])
       ]
     });
-    return ctx.reply(html, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-      reply_markup: sourceKeyboard(cc).reply_markup
-    });
+    return ctx.reply(html, { parse_mode: "HTML", disable_web_page_preview: true, reply_markup: sourceKeyboard(cc).reply_markup });
   }
 
   if (src === "ig") {
@@ -153,14 +135,13 @@ bot.action("back:countries", async ctx => {
   ctx.editMessageText("اختر الدولة:", countryKeyboard());
 });
 
-// زر "نسخ" — يرسل نصًا جاهزًا للنسخ (Telegram لا ينسخ تلقائي)
 bot.action(/^copy_(.+)$/, async ctx => {
   await ctx.answerCbQuery("تم تجهيز النص للنسخ");
   const q = ctx.match[1];
   await ctx.reply(`📋 انسخ هذا النص:\n${q}`);
 });
 
-// ====== Google Trends (مع Fallback تلقائي) ======
+// ====== Google Trends (نصي احتياطي قديم)
 async function fetchGoogleTrendsSmart(geoCode, countryName) {
   try {
     const url = "https://www.searchapi.io/api/v1/search";
@@ -197,7 +178,6 @@ async function fetchGoogleTrendsSmart(geoCode, countryName) {
 
     return `🔥 ترند ${countryName} الآن:\n\n${enriched.join("\n\n")}`;
   } catch {
-    // إذا خلصت الحصة أو صار خطأ، نستخدم Fallback المجاني
     const fallback = await scrapeDailyTrends(geoCode, 10);
     if (!fallback.length) return "⚠️ تعذّر جلب ترند Google حاليًا.";
     const lines = fallback.map((t, i) => `${i + 1}. ${t.title}\n${t.url}`).join("\n\n");
@@ -207,17 +187,14 @@ async function fetchGoogleTrendsSmart(geoCode, countryName) {
 
 // ====== إرسال الكروت بدُفعات ======
 async function sendCards(ctx, cards = []) {
-  // نقسّم الكروت إلى مجموعات كل مجموعة 5 كروت ونرسل كل مجموعة برسالة واحدة
   const chunk = (arr, n) => arr.reduce((a,_,i)=> (i%n? a[a.length-1].push(arr[i]) : a.push([arr[i]]), a), []);
   for (const group of chunk(cards, 5)) {
     const text = group.map(c => c.text).join("\n\n");
-    // نستخدم أزرار آخر كرت في المجموعة كلوحة سفلية موحّدة
     const kb = { inline_keyboard: group.at(-1)?.reply_markup?.inline_keyboard || [] };
     await ctx.reply(text, { parse_mode: "Markdown", disable_web_page_preview: true, reply_markup: kb });
-    await sleep(300);
+    await new Promise(r => setTimeout(r, 300));
   }
 }
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ====== SERVER / WEBHOOK ======
 const app = express();
