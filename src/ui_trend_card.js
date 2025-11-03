@@ -7,13 +7,12 @@ export function trendCard(trend, source) {
 
   return {
     text: `🔥 *${title}*\n📍 المصدر: ${source}\n🔗 الرابط بالأسفل`,
-    ...Markup.inlineKeyboard([
-      [Markup.urlButton("🔎 بحث", url)],
+    reply_markup: Markup.inlineKeyboard([
+      [Markup.button.url("🔎 بحث", url)],
       [
-        Markup.callbackButton("📋 نسخ", `copy_${title}`),
-        Markup.urlButton("📤 مشاركة", url)
+        Markup.button.callback("📋 نسخ", `copy_${title}`),
+        Markup.button.url("📤 مشاركة", url)
       ]
     ])
   };
 }
-
